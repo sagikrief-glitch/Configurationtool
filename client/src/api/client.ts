@@ -8,7 +8,11 @@ import type {
   TemplateFormData,
 } from '../types';
 
-const api = axios.create({ baseURL: '/api' });
+// In production VITE_API_URL points to the Railway backend (e.g. https://myapp.up.railway.app/api).
+// In local dev the Vite proxy forwards /api to localhost:3001.
+const BASE_URL = import.meta.env.VITE_API_URL ?? '/api';
+
+const api = axios.create({ baseURL: BASE_URL });
 
 // --- Configurations ---
 

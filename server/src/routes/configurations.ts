@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { TemplateField, ResolvedField } from '../types';
 
@@ -7,15 +8,8 @@ const router = Router();
 function pid(req: Request): string { return req.params.id as string; }
 type Body = Record<string, string | undefined>;
 
-// SQLite stores tags and values as JSON strings — these helpers handle conversion
-function parseTags(raw: string | null | undefined): string[] {
-  try { return JSON.parse(raw ?? '[]'); } catch { return []; }
-}
-function parseValues(raw: string | null | undefined): Record<string, unknown> {
-  try { return JSON.parse(raw ?? '{}'); } catch { return {}; }
-}
-function parseFields(raw: string | null | undefined): TemplateField[] {
-  try { return JSON.parse(raw ?? '[]'); } catch { return []; }
+function toJson(val: unknown): Prisma.InputJsonValue {
+  return val as unknown as Prisma.InputJsonValue;
 }
 
 // GET /api/configurations — list (values excluded for performance)
@@ -29,32 +23,44 @@ router.get('/', async (req: Request, res: Response) => {
     const type = (req.query.type as string) || undefined;
     const templateId = (req.query.templateId as string) || undefined;
 
-    const all = await prisma.configuration.findMany({
+    const where: Prisma.ConfigurationWhereInput = {};
+
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+        { tags: { has: search } },
+        { category: { contains: search, mode: 'insensitive' } },
+        { provider: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (category) where.category = { equals: category, mode: 'insensitive' };
+    if (provider) where.provider = { equals: provider, mode: 'insensitive' };
+    if (market) where.market = { equals: market, mode: 'insensitive' };
+    if (environment) where.environment = environment;
+    if (type) where.type = type;
+    if (templateId) where.templateId = templateId;
+
+    const configurations = await prisma.configuration.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        category: true,
+        type: true,
+        market: true,
+        provider: true,
+        environment: true,
+        tags: true,
+        templateId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       orderBy: { updatedAt: 'desc' },
     });
 
-    const filtered = all.filter((c) => {
-      if (category && c.category?.toLowerCase() !== category.toLowerCase()) return false;
-      if (provider && c.provider?.toLowerCase() !== provider.toLowerCase()) return false;
-      if (market && c.market?.toLowerCase() !== market.toLowerCase()) return false;
-      if (environment && c.environment !== environment) return false;
-      if (type && c.type !== type) return false;
-      if (templateId && c.templateId !== templateId) return false;
-      if (search) {
-        const s = search.toLowerCase();
-        const tags = parseTags(c.tags);
-        if (
-          !c.name.toLowerCase().includes(s) &&
-          !c.description?.toLowerCase().includes(s) &&
-          !c.category?.toLowerCase().includes(s) &&
-          !c.provider?.toLowerCase().includes(s) &&
-          !tags.some((t) => t.toLowerCase().includes(s))
-        ) return false;
-      }
-      return true;
-    });
-
-    res.json(filtered.map((c) => ({ ...c, tags: parseTags(c.tags) })));
+    res.json(configurations);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch configurations' });
@@ -71,19 +77,19 @@ router.get('/:id', async (req: Request, res: Response) => {
 
     if (!config) { res.status(404).json({ error: 'Configuration not found' }); return; }
 
-    const values = parseValues(config.values as unknown as string);
-    const tmpl = (config as typeof config & { template: { fields: string } | null }).template;
+    const values = (config.values as Record<string, unknown>) ?? {};
+    const tmpl = (config as typeof config & { template: { fields: unknown } | null }).template;
     let resolvedFields: ResolvedField[] = [];
 
     if (tmpl) {
-      const fields = parseFields(tmpl.fields);
+      const fields = (tmpl.fields as unknown as TemplateField[]) ?? [];
       resolvedFields = fields.map((field) => ({
         ...field,
         value: values[field.name] ?? field.defaultValue ?? null,
       }));
     }
 
-    res.json({ ...config, tags: parseTags(config.tags as unknown as string), values, resolvedFields });
+    res.json({ ...config, resolvedFields });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch configuration' });
@@ -103,11 +109,10 @@ router.post('/', async (req: Request, res: Response) => {
     if (templateId) {
       const template = await prisma.template.findUnique({ where: { id: templateId } });
       if (template) {
-        const fields = parseFields(template.fields as unknown as string);
+        const fields = (template.fields as unknown as TemplateField[]) ?? [];
         const missing = fields.filter((f) => f.required && !values[f.name]).map((f) => f.name);
         if (missing.length > 0) {
-          res.status(400).json({ error: 'Missing required fields', fields: missing });
-          return;
+          res.status(400).json({ error: 'Missing required fields', fields: missing }); return;
         }
       }
     }
@@ -121,14 +126,14 @@ router.post('/', async (req: Request, res: Response) => {
         market: market ?? null,
         provider: provider ?? null,
         environment: environment ?? null,
-        tags: JSON.stringify(tags),
-        values: JSON.stringify(values),
+        tags,
+        values: toJson(values),
         notes: notes ?? null,
         templateId: templateId ?? null,
       },
     });
 
-    res.status(201).json({ ...config, tags: parseTags(config.tags as unknown as string), values: parseValues(config.values as unknown as string) });
+    res.status(201).json(config);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create configuration' });
@@ -154,7 +159,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (effectiveTemplateId && values !== undefined) {
       const template = await prisma.template.findUnique({ where: { id: effectiveTemplateId } });
       if (template) {
-        const fields = parseFields(template.fields as unknown as string);
+        const fields = (template.fields as unknown as TemplateField[]) ?? [];
         const missing = fields.filter((f) => f.required && !values[f.name]).map((f) => f.name);
         if (missing.length > 0) {
           res.status(400).json({ error: 'Missing required fields', fields: missing }); return;
@@ -162,24 +167,28 @@ router.put('/:id', async (req: Request, res: Response) => {
       }
     }
 
+    const updateData: Prisma.ConfigurationUpdateInput = {
+      ...(name !== undefined && { name: name.trim() }),
+      ...(description !== undefined && { description }),
+      ...(category !== undefined && { category }),
+      ...(type !== undefined && { type }),
+      ...(market !== undefined && { market }),
+      ...(provider !== undefined && { provider }),
+      ...(environment !== undefined && { environment }),
+      ...(tags !== undefined && { tags }),
+      ...(values !== undefined && { values: toJson(values) }),
+      ...(notes !== undefined && { notes }),
+      ...(templateId !== undefined && {
+        template: templateId ? { connect: { id: templateId } } : { disconnect: true },
+      }),
+    };
+
     const updated = await prisma.configuration.update({
       where: { id: pid(req) },
-      data: {
-        ...(name !== undefined && { name: name.trim() }),
-        ...(description !== undefined && { description }),
-        ...(category !== undefined && { category }),
-        ...(type !== undefined && { type }),
-        ...(market !== undefined && { market }),
-        ...(provider !== undefined && { provider }),
-        ...(environment !== undefined && { environment }),
-        ...(tags !== undefined && { tags: JSON.stringify(tags) }),
-        ...(values !== undefined && { values: JSON.stringify(values) }),
-        ...(notes !== undefined && { notes }),
-        ...(templateId !== undefined && { templateId: templateId || null }),
-      },
+      data: updateData,
     });
 
-    res.json({ ...updated, tags: parseTags(updated.tags as unknown as string), values: parseValues(updated.values as unknown as string) });
+    res.json(updated);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update configuration' });
@@ -214,14 +223,14 @@ router.post('/:id/duplicate', async (req: Request, res: Response) => {
         market: original.market,
         provider: original.provider,
         environment: original.environment,
-        tags: original.tags,
-        values: original.values,
+        tags: [...original.tags],
+        values: toJson(original.values),
         notes: original.notes,
         templateId: original.templateId,
       },
     });
 
-    res.status(201).json({ ...duplicate, tags: parseTags(duplicate.tags as unknown as string), values: parseValues(duplicate.values as unknown as string) });
+    res.status(201).json(duplicate);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to duplicate configuration' });

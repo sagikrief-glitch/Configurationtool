@@ -1,13 +1,12 @@
-// prisma/schema.prisma
-// Switched from PostgreSQL to SQLite for zero-config local development
-// SQLite does not support String[] arrays — tags stored as JSON string
+// prisma/schema.prisma — PostgreSQL (Supabase)
+// Restored native Json and String[] types from SQLite workaround
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 model Configuration {
@@ -19,8 +18,8 @@ model Configuration {
   market      String?
   provider    String?
   environment String?
-  tags        String    @default("[]") // JSON-encoded string array (SQLite limitation)
-  values      String    @default("{}") // JSON-encoded object (SQLite: Json stored as TEXT)
+  tags        String[]
+  values      Json      @default("{}")
   notes       String?
   templateId  String?
   template    Template? @relation(fields: [templateId], references: [id], onDelete: SetNull)
@@ -41,7 +40,7 @@ model Template {
   description    String?
   category       String?
   provider       String?
-  fields         String          @default("[]") // JSON-encoded TemplateField[]
+  fields         Json            @default("[]")
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   configurations Configuration[]

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { TemplateField } from '../types';
 
@@ -7,15 +8,17 @@ const router = Router();
 function pid(req: Request): string { return req.params.id as string; }
 type Body = Record<string, string | undefined>;
 
-function parseFields(raw: string | null | undefined): TemplateField[] {
-  try { return JSON.parse(raw ?? '[]'); } catch { return []; }
+function toJson(val: unknown): Prisma.InputJsonValue {
+  return val as unknown as Prisma.InputJsonValue;
 }
 
 // GET /api/templates
 router.get('/', async (_req: Request, res: Response) => {
   try {
-    const templates = await prisma.template.findMany({ orderBy: { updatedAt: 'desc' } });
-    res.json(templates.map((t) => ({ ...t, fields: parseFields(t.fields as unknown as string) })));
+    const templates = await prisma.template.findMany({
+      orderBy: { updatedAt: 'desc' },
+    });
+    res.json(templates);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch templates' });
@@ -25,12 +28,9 @@ router.get('/', async (_req: Request, res: Response) => {
 // GET /api/templates/:id
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const template = await prisma.template.findUnique({
-      where: { id: pid(req) },
-      include: { _count: { select: { configurations: true } } },
-    });
+    const template = await prisma.template.findUnique({ where: { id: pid(req) } });
     if (!template) { res.status(404).json({ error: 'Template not found' }); return; }
-    res.json({ ...template, fields: parseFields(template.fields as unknown as string) });
+    res.json(template);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch template' });
@@ -45,20 +45,17 @@ router.post('/', async (req: Request, res: Response) => {
 
     if (!name?.trim()) { res.status(400).json({ error: 'name is required' }); return; }
 
-    const v = validateFields(fields);
-    if (v.error) { res.status(400).json({ error: v.error }); return; }
-
     const template = await prisma.template.create({
       data: {
         name: name.trim(),
         description: description ?? null,
         category: category ?? null,
         provider: provider ?? null,
-        fields: JSON.stringify(fields),
+        fields: toJson(fields),
       },
     });
 
-    res.status(201).json({ ...template, fields: parseFields(template.fields as unknown as string) });
+    res.status(201).json(template);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create template' });
@@ -74,32 +71,31 @@ router.put('/:id', async (req: Request, res: Response) => {
     const { name, description, category, provider } = req.body as Body;
     const fields: TemplateField[] | undefined = req.body.fields;
 
-    if (name !== undefined && !name?.trim()) { res.status(400).json({ error: 'name cannot be empty' }); return; }
-
-    if (fields !== undefined) {
-      const v = validateFields(fields);
-      if (v.error) { res.status(400).json({ error: v.error }); return; }
+    if (name !== undefined && !name?.trim()) {
+      res.status(400).json({ error: 'name cannot be empty' }); return;
     }
+
+    const updateData: Prisma.TemplateUpdateInput = {
+      ...(name !== undefined && { name: name.trim() }),
+      ...(description !== undefined && { description }),
+      ...(category !== undefined && { category }),
+      ...(provider !== undefined && { provider }),
+      ...(fields !== undefined && { fields: toJson(fields) }),
+    };
 
     const updated = await prisma.template.update({
       where: { id: pid(req) },
-      data: {
-        ...(name !== undefined && { name: name.trim() }),
-        ...(description !== undefined && { description }),
-        ...(category !== undefined && { category }),
-        ...(provider !== undefined && { provider }),
-        ...(fields !== undefined && { fields: JSON.stringify(fields) }),
-      },
+      data: updateData,
     });
 
-    res.json({ ...updated, fields: parseFields(updated.fields as unknown as string) });
+    res.json(updated);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update template' });
   }
 });
 
-// DELETE /api/templates/:id — related configurations keep their data (SetNull on templateId)
+// DELETE /api/templates/:id
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const existing = await prisma.template.findUnique({ where: { id: pid(req) } });
@@ -111,16 +107,5 @@ router.delete('/:id', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to delete template' });
   }
 });
-
-function validateFields(fields: TemplateField[]): { error?: string } {
-  if (!Array.isArray(fields)) return { error: 'fields must be an array' };
-  const validTypes = ['string', 'number', 'boolean', 'json', 'url'];
-  for (const f of fields) {
-    if (!f.name?.trim()) return { error: 'Each field must have a name' };
-    if (!f.label?.trim()) return { error: 'Each field must have a label' };
-    if (!validTypes.includes(f.type)) return { error: `Invalid field type: ${f.type}` };
-  }
-  return {};
-}
 
 export default router;

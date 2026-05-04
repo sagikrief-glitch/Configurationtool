@@ -1,10 +1,14 @@
+import pg from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 
-const dbUrl = process.env.DATABASE_URL ?? 'file:./dev.db';
+// Prisma 7 + PostgreSQL (Supabase) — adapter-pg pattern
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+});
 
-// PrismaBetterSqlite3 adapter accepts { url } — resolves relative file: paths automatically
-const adapter = new PrismaBetterSqlite3({ url: dbUrl });
+const adapter = new PrismaPg(pool);
 
 export const prisma = new PrismaClient({
   adapter,
