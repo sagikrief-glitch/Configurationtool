@@ -2,20 +2,12 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-// In local dev the proxy forwards /api → localhost:3001.
-// In production (Vercel) the frontend calls VITE_API_URL directly.
+// Base path matches the GitHub repo name for GitHub Pages.
+// In local dev (mode === 'development') base stays '/' so the dev server works normally.
 export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss()],
-  server:
-    mode === 'development'
-      ? {
-          port: 5173,
-          proxy: {
-            '/api': {
-              target: 'http://localhost:3001',
-              changeOrigin: true,
-            },
-          },
-        }
-      : { port: 5173 },
+  base: mode === 'production' ? '/Configurationtool/' : '/',
+  server: {
+    port: 5173,
+  },
 }));
