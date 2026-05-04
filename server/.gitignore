@@ -1,0 +1,14 @@
+node_modules
+.env
+.env.local
+.env.production
+
+# SQLite local dev files
+dev.db
+*.db
+
+# Build output
+dist
+
+# Prisma generated (regenerated on install)
+/generated/prisma

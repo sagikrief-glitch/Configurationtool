@@ -1,0 +1,27 @@
+# Root gitignore
+node_modules
+.env
+.env.local
+.env.production
+
+# SQLite local dev database
+*.db
+dev.db
+
+# Build output
+dist
+dist-ssr
+build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor
+.idea
+*.suo
+*.sw?
