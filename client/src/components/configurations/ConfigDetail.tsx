@@ -27,6 +27,24 @@ const ENV_COLORS: Record<string, string> = {
   other: 'text-gray-400 bg-gray-400/10 border-gray-400/20',
 };
 
+// Derive copyable text and display content from values + type
+function resolveContent(
+  type: string,
+  values: Record<string, unknown>
+): { display: 'json' | 'raw' | 'kv'; text: string } {
+  if (type === 'yaml' || type === 'script' || type === 'other') {
+    const raw = typeof values.__content === 'string' ? values.__content : '';
+    return { display: 'raw', text: raw };
+  }
+  if (type === 'kv') {
+    const entries = Object.entries(values).filter(([k]) => k !== '__content');
+    const text = entries.map(([k, v]) => `${k}=${v}`).join('\n');
+    return { display: 'kv', text };
+  }
+  // json (default)
+  return { display: 'json', text: JSON.stringify(values, null, 2) };
+}
+
 export default function ConfigDetail({
   config,
   onEdit,
@@ -37,21 +55,30 @@ export default function ConfigDetail({
   const [showNotes, setShowNotes] = useState(true);
   const [showValues, setShowValues] = useState(true);
 
+  const values = (config.values ?? {}) as Record<string, unknown>;
+  const { display, text: copyText } = resolveContent(config.type, values);
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(JSON.stringify(config.values, null, 2));
+    navigator.clipboard.writeText(copyText);
     toast('Copied to clipboard');
   };
 
   const handleExportJSON = () => {
-    const blob = new Blob([JSON.stringify(config.values, null, 2)], {
-      type: 'application/json',
-    });
+    const blob = new Blob([JSON.stringify(values, null, 2)], { type: 'application/json' });
     download(blob, `${slug(config.name)}.json`);
     toast('Exported as JSON');
   };
 
   const handleExportYAML = () => {
-    const blob = new Blob([yaml.dump(config.values)], { type: 'text/yaml' });
+    let content: string;
+    if (display === 'raw' && config.type === 'yaml') {
+      content = copyText;
+    } else if (display === 'kv') {
+      content = yaml.dump(values);
+    } else {
+      content = yaml.dump(values);
+    }
+    const blob = new Blob([content], { type: 'text/yaml' });
     download(blob, `${slug(config.name)}.yaml`);
     toast('Exported as YAML');
   };
@@ -124,9 +151,7 @@ export default function ConfigDetail({
         {/* Resolved fields (template-based) */}
         {config.resolvedFields.length > 0 && (
           <section>
-            <p className="text-xs font-medium text-[#8b949e] uppercase tracking-wider mb-2">
-              Fields
-            </p>
+            <p className="text-xs font-medium text-[#8b949e] uppercase tracking-wider mb-2">Fields</p>
             <div className="space-y-2">
               {config.resolvedFields.map((field) => (
                 <div key={field.name} className="bg-[#161b22] border border-[#30363d] rounded-md px-3 py-2.5">
@@ -149,7 +174,7 @@ export default function ConfigDetail({
           </section>
         )}
 
-        {/* Raw values */}
+        {/* Values section */}
         <section>
           <div className="flex items-center justify-between mb-2">
             <button
@@ -180,10 +205,51 @@ export default function ConfigDetail({
               </button>
             </div>
           </div>
+
           {showValues && (
-            <pre className="text-xs text-[#79c0ff] bg-[#161b22] border border-[#30363d] rounded-md px-3 py-2.5 overflow-x-auto font-mono leading-relaxed">
-              {JSON.stringify(config.values, null, 2)}
-            </pre>
+            <>
+              {/* JSON display */}
+              {display === 'json' && (
+                <pre className="text-xs text-[#79c0ff] bg-[#161b22] border border-[#30363d] rounded-md px-3 py-2.5 overflow-x-auto font-mono leading-relaxed whitespace-pre-wrap">
+                  {JSON.stringify(values, null, 2)}
+                </pre>
+              )}
+
+              {/* Raw text display (yaml / script / other) */}
+              {display === 'raw' && (
+                <pre className="text-xs text-[#79c0ff] bg-[#161b22] border border-[#30363d] rounded-md px-3 py-2.5 overflow-x-auto font-mono leading-relaxed whitespace-pre-wrap">
+                  {copyText || <span className="text-[#484f58] italic">empty</span>}
+                </pre>
+              )}
+
+              {/* KV table display */}
+              {display === 'kv' && (
+                <div className="bg-[#161b22] border border-[#30363d] rounded-md overflow-hidden">
+                  {Object.entries(values).filter(([k]) => k !== '__content').length === 0 ? (
+                    <p className="text-xs text-[#484f58] italic px-3 py-2.5">No key-value pairs</p>
+                  ) : (
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-[#30363d]">
+                          <th className="text-left px-3 py-2 text-[#484f58] font-medium w-2/5">Key</th>
+                          <th className="text-left px-3 py-2 text-[#484f58] font-medium">Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(values)
+                          .filter(([k]) => k !== '__content')
+                          .map(([k, v], i) => (
+                            <tr key={k} className={i % 2 === 0 ? '' : 'bg-[#0f1117]'}>
+                              <td className="px-3 py-2 font-mono text-[#e6edf3] break-all">{k}</td>
+                              <td className="px-3 py-2 font-mono text-[#79c0ff] break-all">{String(v)}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </section>
       </div>

@@ -25,6 +25,31 @@ const EMPTY: ConfigFormData = {
   templateId: null,
 };
 
+const TYPES = ['json', 'yaml', 'kv', 'script', 'other'] as const;
+type ConfigType = (typeof TYPES)[number];
+
+// Extract raw text content from a __content wrapper, or serialise JSON as fallback
+function getRawContent(values: Record<string, unknown>): string {
+  if (typeof values.__content === 'string') return values.__content;
+  return '';
+}
+
+// Convert values object to KV rows
+function toKvRows(values: Record<string, unknown>): [string, string][] {
+  const entries = Object.entries(values).filter(([k]) => k !== '__content');
+  if (entries.length === 0) return [['', '']];
+  return entries.map(([k, v]) => [k, String(v)]);
+}
+
+// Convert KV rows to a plain object
+function kvRowsToObject(rows: [string, string][]): Record<string, string> {
+  const obj: Record<string, string> = {};
+  for (const [k, v] of rows) {
+    if (k.trim()) obj[k.trim()] = v;
+  }
+  return obj;
+}
+
 export default function ConfigForm({
   initial,
   templates,
@@ -35,14 +60,26 @@ export default function ConfigForm({
 }: ConfigFormProps) {
   const [form, setForm] = useState<ConfigFormData>({ ...EMPTY, ...initial });
   const [tagInput, setTagInput] = useState('');
-  const [valuesText, setValuesText] = useState(
-    JSON.stringify(initial?.values ?? {}, null, 2)
-  );
-  const [valuesError, setValuesError] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const selectedTemplate = templates.find((t) => t.id === form.templateId) ?? null;
+  // JSON editor state
+  const [jsonText, setJsonText] = useState(
+    JSON.stringify(initial?.values ?? {}, null, 2)
+  );
+  const [jsonError, setJsonError] = useState('');
 
+  // Raw text editor state (yaml / script / other)
+  const [rawText, setRawText] = useState(() => getRawContent((initial?.values ?? {}) as Record<string, unknown>));
+
+  // KV editor state
+  const [kvRows, setKvRows] = useState<[string, string][]>(() =>
+    toKvRows((initial?.values ?? {}) as Record<string, unknown>)
+  );
+
+  const selectedTemplate = templates.find((t) => t.id === form.templateId) ?? null;
+  const type = form.type as ConfigType;
+
+  // When template changes, merge defaults into the json editor
   useEffect(() => {
     if (selectedTemplate) {
       const defaults: Record<string, unknown> = {};
@@ -50,7 +87,7 @@ export default function ConfigForm({
         if (f.defaultValue != null) defaults[f.name] = f.defaultValue;
       });
       const merged = { ...defaults, ...form.values };
-      setValuesText(JSON.stringify(merged, null, 2));
+      setJsonText(JSON.stringify(merged, null, 2));
       setForm((prev) => ({ ...prev, values: merged }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -59,32 +96,50 @@ export default function ConfigForm({
   const set = (key: keyof ConfigFormData, value: unknown) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
-  const handleValuesChange = (text: string) => {
-    setValuesText(text);
+  // --- JSON handlers ---
+  const handleJsonChange = (text: string) => {
+    setJsonText(text);
     try {
       const parsed = JSON.parse(text);
       setForm((prev) => ({ ...prev, values: parsed }));
-      setValuesError('');
+      setJsonError('');
     } catch {
-      setValuesError('Invalid JSON');
+      setJsonError('Invalid JSON');
     }
   };
 
+  // --- Raw text handlers (yaml / script / other) ---
+  const handleRawChange = (text: string) => {
+    setRawText(text);
+    setForm((prev) => ({ ...prev, values: { __content: text } }));
+  };
+
+  // --- KV handlers ---
+  const handleKvChange = (rows: [string, string][]) => {
+    setKvRows(rows);
+    setForm((prev) => ({ ...prev, values: kvRowsToObject(rows) }));
+  };
+
+  const addKvRow = () => handleKvChange([...kvRows, ['', '']]);
+  const removeKvRow = (i: number) => handleKvChange(kvRows.filter((_, idx) => idx !== i));
+  const updateKvRow = (i: number, col: 0 | 1, val: string) => {
+    const next = kvRows.map((r, idx) => (idx === i ? ([col === 0 ? val : r[0], col === 1 ? val : r[1]] as [string, string]) : r));
+    handleKvChange(next);
+  };
+
+  // --- Tags ---
   const addTag = () => {
     const t = tagInput.trim();
-    if (t && !form.tags.includes(t)) {
-      set('tags', [...form.tags, t]);
-    }
+    if (t && !form.tags.includes(t)) set('tags', [...form.tags, t]);
     setTagInput('');
   };
+  const removeTag = (tag: string) => set('tags', form.tags.filter((t) => t !== tag));
 
-  const removeTag = (tag: string) =>
-    set('tags', form.tags.filter((t) => t !== tag));
-
+  // --- Validation ---
   const validate = (): boolean => {
     const errs: Record<string, string> = {};
     if (!form.name.trim()) errs.name = 'Name is required';
-    if (valuesError) errs.values = valuesError;
+    if (type === 'json' && jsonError) errs.values = jsonError;
 
     if (selectedTemplate) {
       (selectedTemplate.fields as TemplateField[]).forEach((f) => {
@@ -132,9 +187,7 @@ export default function ConfigForm({
           >
             <option value="">None (from scratch)</option>
             {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
+              <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
         </Field>
@@ -161,7 +214,7 @@ export default function ConfigForm({
           />
         </Field>
 
-        {/* Row: category + provider */}
+        {/* Category + Provider */}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Category">
             <input value={form.category} onChange={(e) => set('category', e.target.value)} placeholder="e.g. payment" className={input()} />
@@ -171,7 +224,7 @@ export default function ConfigForm({
           </Field>
         </div>
 
-        {/* Row: market + environment + type */}
+        {/* Market + Environment + Type */}
         <div className="grid grid-cols-3 gap-3">
           <Field label="Market">
             <input value={form.market} onChange={(e) => set('market', e.target.value)} placeholder="e.g. US" className={input()} />
@@ -186,7 +239,7 @@ export default function ConfigForm({
           </Field>
           <Field label="Type">
             <select value={form.type} onChange={(e) => set('type', e.target.value)} className={input()}>
-              {['json', 'yaml', 'kv', 'other'].map((t) => (
+              {TYPES.map((t) => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
@@ -200,7 +253,7 @@ export default function ConfigForm({
               type="text"
               value={tagInput}
               onChange={(e) => setTagInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); }}}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
               placeholder="Add tag, press Enter"
               className={`${input()} flex-1`}
             />
@@ -218,7 +271,7 @@ export default function ConfigForm({
           </div>
         </Field>
 
-        {/* Template required fields validation hints */}
+        {/* Template required fields hints */}
         {selectedTemplate && (selectedTemplate.fields as TemplateField[]).length > 0 && (
           <div className="bg-[#161b22] border border-[#30363d] rounded-md px-3 py-2.5">
             <p className="text-xs font-medium text-[#8b949e] mb-2">Required fields from template</p>
@@ -230,34 +283,101 @@ export default function ConfigForm({
           </div>
         )}
 
-        {/* Values JSON editor */}
-        <Field label="Values (JSON)" error={errors.values ?? valuesError}>
-          {selectedTemplate && (selectedTemplate.fields as TemplateField[]).length > 0 && (
-            <div className="mb-1.5 flex flex-wrap gap-1">
-              {(selectedTemplate.fields as TemplateField[]).map((f) => (
-                <span
-                  key={f.name}
-                  className={`text-[10px] px-1.5 py-0.5 rounded font-mono border ${
-                    f.required
-                      ? 'text-red-400 bg-red-400/10 border-red-400/20'
-                      : 'text-[#8b949e] bg-[#21262d] border-[#30363d]'
-                  }`}
-                  title={f.description}
-                >
-                  {f.name}{f.required ? '*' : ''}
-                </span>
+        {/* Values editor — adapts to type */}
+        {type === 'json' && (
+          <Field label="Values (JSON)" error={errors.values ?? jsonError}>
+            {selectedTemplate && (selectedTemplate.fields as TemplateField[]).length > 0 && (
+              <div className="mb-1.5 flex flex-wrap gap-1">
+                {(selectedTemplate.fields as TemplateField[]).map((f) => (
+                  <span
+                    key={f.name}
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-mono border ${
+                      f.required
+                        ? 'text-red-400 bg-red-400/10 border-red-400/20'
+                        : 'text-[#8b949e] bg-[#21262d] border-[#30363d]'
+                    }`}
+                    title={f.description}
+                  >
+                    {f.name}{f.required ? '*' : ''}
+                  </span>
+                ))}
+                <span className="text-[10px] text-[#484f58]">* = required in template</span>
+              </div>
+            )}
+            <textarea
+              value={jsonText}
+              onChange={(e) => handleJsonChange(e.target.value)}
+              rows={10}
+              spellCheck={false}
+              className={`${input(!!jsonError)} font-mono text-xs resize-y leading-relaxed`}
+            />
+          </Field>
+        )}
+
+        {(type === 'yaml') && (
+          <Field label="Values (YAML)">
+            <textarea
+              value={rawText}
+              onChange={(e) => handleRawChange(e.target.value)}
+              rows={10}
+              spellCheck={false}
+              placeholder={'key: value\nfoo: bar\nlist:\n  - item1\n  - item2'}
+              className={`${input()} font-mono text-xs resize-y leading-relaxed`}
+            />
+          </Field>
+        )}
+
+        {type === 'kv' && (
+          <Field label="Key-Value Pairs">
+            <div className="space-y-2">
+              {kvRows.map((row, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    value={row[0]}
+                    onChange={(e) => updateKvRow(i, 0, e.target.value)}
+                    placeholder="key"
+                    className={`${input()} flex-1 font-mono text-xs`}
+                  />
+                  <span className="text-[#484f58] text-xs shrink-0">=</span>
+                  <input
+                    value={row[1]}
+                    onChange={(e) => updateKvRow(i, 1, e.target.value)}
+                    placeholder="value"
+                    className={`${input()} flex-1 font-mono text-xs`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeKvRow(i)}
+                    disabled={kvRows.length === 1}
+                    className="p-1.5 rounded border border-[#30363d] text-[#8b949e] hover:text-red-400 disabled:opacity-30"
+                  >
+                    <Minus size={12} />
+                  </button>
+                </div>
               ))}
-              <span className="text-[10px] text-[#484f58]">* = required in template</span>
+              <button
+                type="button"
+                onClick={addKvRow}
+                className="flex items-center gap-1.5 text-xs text-[#388bfd] hover:text-[#79c0ff] mt-1"
+              >
+                <Plus size={12} /> Add row
+              </button>
             </div>
-          )}
-          <textarea
-            value={valuesText}
-            onChange={(e) => handleValuesChange(e.target.value)}
-            rows={10}
-            spellCheck={false}
-            className={`${input(!!valuesError)} font-mono text-xs resize-y leading-relaxed`}
-          />
-        </Field>
+          </Field>
+        )}
+
+        {(type === 'script' || type === 'other') && (
+          <Field label={type === 'script' ? 'Script' : 'Content'}>
+            <textarea
+              value={rawText}
+              onChange={(e) => handleRawChange(e.target.value)}
+              rows={12}
+              spellCheck={false}
+              placeholder={type === 'script' ? '#!/bin/bash\n# paste your script here' : 'Paste content here...'}
+              className={`${input()} font-mono text-xs resize-y leading-relaxed`}
+            />
+          </Field>
+        )}
 
         {/* Notes */}
         <Field label="Notes">
