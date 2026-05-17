@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Plus, Minus } from 'lucide-react';
 import type { ConfigFormData, Template, TemplateField } from '../../types';
+import { useConfigurationOptions } from '../../hooks/useConfigurations';
 
 interface ConfigFormProps {
   initial?: Partial<ConfigFormData>;
@@ -61,6 +62,10 @@ export default function ConfigForm({
   const [form, setForm] = useState<ConfigFormData>({ ...EMPTY, ...initial });
   const [tagInput, setTagInput] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const { data: configOptions } = useConfigurationOptions();
+  const categories = configOptions?.categories ?? [];
+  const markets = configOptions?.markets ?? [];
 
   // JSON editor state
   const [jsonText, setJsonText] = useState(
@@ -217,7 +222,16 @@ export default function ConfigForm({
         {/* Category + Provider */}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Category">
-            <input value={form.category} onChange={(e) => set('category', e.target.value)} placeholder="e.g. payment" className={input()} />
+            <input
+              value={form.category}
+              onChange={(e) => set('category', e.target.value)}
+              list="category-options"
+              placeholder="e.g. payment"
+              className={input()}
+            />
+            <datalist id="category-options">
+              {categories.map((c) => <option key={c} value={c} />)}
+            </datalist>
           </Field>
           <Field label="Provider">
             <input value={form.provider} onChange={(e) => set('provider', e.target.value)} placeholder="e.g. Stripe" className={input()} />
@@ -227,7 +241,16 @@ export default function ConfigForm({
         {/* Market + Environment + Type */}
         <div className="grid grid-cols-3 gap-3">
           <Field label="Market">
-            <input value={form.market} onChange={(e) => set('market', e.target.value)} placeholder="e.g. US" className={input()} />
+            <input
+              value={form.market}
+              onChange={(e) => set('market', e.target.value)}
+              list="market-options"
+              placeholder="e.g. US"
+              className={input()}
+            />
+            <datalist id="market-options">
+              {markets.map((m) => <option key={m} value={m} />)}
+            </datalist>
           </Field>
           <Field label="Environment">
             <select value={form.environment} onChange={(e) => set('environment', e.target.value)} className={input()}>

@@ -58,3 +58,11 @@ export function useDuplicateConfiguration() {
     onSuccess: () => qc.invalidateQueries({ queryKey: configKeys.all }),
   });
 }
+
+export function useConfigurationOptions() {
+  return useQuery({
+    queryKey: ['configuration-options'],
+    queryFn: api.getConfigurationOptions,
+    staleTime: 30_000,
+  });
+}

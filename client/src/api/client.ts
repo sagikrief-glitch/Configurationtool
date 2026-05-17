@@ -241,3 +241,12 @@ export async function deleteTemplate(id: string): Promise<void> {
   const { error } = await supabase.from('Template').delete().eq('id', id);
   if (error) throw new Error(error.message);
 }
+
+// --- Configuration field options (distinct values for comboboxes) ---
+
+export async function getConfigurationOptions(): Promise<{ categories: string[]; markets: string[] }> {
+  const { data } = await supabase.from('Configuration').select('category, market');
+  const categories = [...new Set((data ?? []).map((r) => r.category).filter(Boolean) as string[])].sort();
+  const markets = [...new Set((data ?? []).map((r) => r.market).filter(Boolean) as string[])].sort();
+  return { categories, markets };
+}
